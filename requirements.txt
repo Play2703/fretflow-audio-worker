@@ -1,3 +1,4 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
-yt-dlp>=2024.08.06
+yt-dlp>=2025.01.0
+bgutil-ytdlp-pot-provider

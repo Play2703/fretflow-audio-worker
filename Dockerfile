@@ -8,7 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Hugging Face Spaces runs as user 1000
+# Download precompiled bgutil-pot binary for Proof-of-Origin token generation
+RUN curl -L -s -o /usr/local/bin/bgutil-pot "https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs/releases/download/v0.8.1/bgutil-pot-linux-x86_64" \
+    && chmod +x /usr/local/bin/bgutil-pot
+
+# Non-root user
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \
@@ -24,7 +28,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application source
 COPY --chown=user:user . .
 
-# Expose port (Render uses 10000 by default, Hugging Face uses 7860)
+# Expose port (Render uses 10000 by default)
 EXPOSE 10000
 
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "bgutil-pot server --host 127.0.0.1 --port 4416 & uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]

@@ -54,6 +54,8 @@ def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) ->
         "--remote-components",
         "ejs:github",
         "--extractor-args",
+        "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+        "--extractor-args",
         "youtube:player_client=android,visionos",
     ]
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
