@@ -43,6 +43,26 @@ def health_check():
     }
 
 
+def get_yt_dlp_base_args():
+    args = [
+        "--no-playlist",
+        "--quiet",
+        "--no-warnings",
+        "--extractor-args",
+        "youtube:player_skip=webpage,configs;player_client=android,visionos",
+    ]
+    cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
+    if cookies_content:
+        cookies_path = "/tmp/yt_cookies.txt"
+        try:
+            with open(cookies_path, "w", encoding="utf-8") as f:
+                f.write(cookies_content)
+            args.extend(["--cookies", cookies_path])
+        except Exception:
+            pass
+    return args
+
+
 @app.get("/metadata")
 def get_metadata(url: str = Query(..., description="YouTube URL")):
     video_id = extract_video_id(url)
@@ -50,13 +70,7 @@ def get_metadata(url: str = Query(..., description="YouTube URL")):
         raise HTTPException(status_code=400, detail="URL inválida do YouTube.")
 
     target_url = f"https://www.youtube.com/watch?v={video_id}"
-    cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--quiet",
-        "--no-warnings",
-        "--extractor-args",
-        "youtube:player_client=visionos,android",
+    cmd = ["yt-dlp"] + get_yt_dlp_base_args() + [
         "--print",
         "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s",
         target_url,
@@ -95,13 +109,7 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
     target_url = f"https://www.youtube.com/watch?v={video_id}"
 
     # 1. Verifica duração máxima
-    dur_cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--quiet",
-        "--no-warnings",
-        "--extractor-args",
-        "youtube:player_client=visionos,android",
+    dur_cmd = ["yt-dlp"] + get_yt_dlp_base_args() + [
         "--print",
         "%(duration)s",
         target_url,
@@ -122,16 +130,10 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
         pass
 
     # 2. Executa yt-dlp fazendo streaming direto com ffmpeg para áudio leve (m4a/aac)
-    yt_cmd = [
-        "yt-dlp",
-        "--no-playlist",
+    yt_cmd = ["yt-dlp"] + get_yt_dlp_base_args() + [
         "--no-progress",
-        "--quiet",
-        "--no-warnings",
-        "--extractor-args",
-        "youtube:player_client=visionos,android",
         "--format",
-        "140/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio",
+        "140/18/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best",
         "-o",
         "-",
         target_url,
