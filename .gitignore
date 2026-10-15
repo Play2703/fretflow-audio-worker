@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+cookies.txt
+yt_cookies.txt
+deploy_*.py
+.env

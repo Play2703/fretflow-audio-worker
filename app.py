@@ -43,16 +43,21 @@ def health_check():
     }
 
 
-def get_yt_dlp_base_args():
+def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) -> list:
     args = [
+        "yt-dlp",
         "--no-playlist",
         "--quiet",
         "--no-warnings",
+        "--js-runtimes",
+        "node",
+        "--remote-components",
+        "ejs:github",
         "--extractor-args",
-        "youtube:player_skip=webpage,configs;player_client=android,visionos",
+        "youtube:player_client=android,visionos",
     ]
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
-    if cookies_content:
+    if use_cookies and cookies_content:
         cookies_path = "/tmp/yt_cookies.txt"
         try:
             with open(cookies_path, "w", encoding="utf-8") as f:
@@ -60,6 +65,8 @@ def get_yt_dlp_base_args():
             args.extend(["--cookies", cookies_path])
         except Exception:
             pass
+    args.extend(extra_args)
+    args.append(target_url)
     return args
 
 
@@ -70,13 +77,22 @@ def get_metadata(url: str = Query(..., description="YouTube URL")):
         raise HTTPException(status_code=400, detail="URL inválida do YouTube.")
 
     target_url = f"https://www.youtube.com/watch?v={video_id}"
-    cmd = ["yt-dlp"] + get_yt_dlp_base_args() + [
-        "--print",
-        "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s",
+    cmd = build_yt_cmd(
+        ["--print", "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s"],
         target_url,
-    ]
+        use_cookies=True,
+    )
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        # Se falhou e usou cookies, tenta novamente sem cookies
+        if res.returncode != 0 and "--cookies" in cmd:
+            cmd_no_cookies = build_yt_cmd(
+                ["--print", "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s"],
+                target_url,
+                use_cookies=False,
+            )
+            res = subprocess.run(cmd_no_cookies, capture_output=True, text=True, timeout=20)
+
         if res.returncode != 0:
             raise HTTPException(
                 status_code=422,
@@ -109,13 +125,13 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
     target_url = f"https://www.youtube.com/watch?v={video_id}"
 
     # 1. Verifica duração máxima
-    dur_cmd = ["yt-dlp"] + get_yt_dlp_base_args() + [
-        "--print",
-        "%(duration)s",
-        target_url,
-    ]
+    dur_cmd = build_yt_cmd(["--print", "%(duration)s"], target_url, use_cookies=True)
     try:
-        dur_res = subprocess.run(dur_cmd, capture_output=True, text=True, timeout=12)
+        dur_res = subprocess.run(dur_cmd, capture_output=True, text=True, timeout=15)
+        if dur_res.returncode != 0 and "--cookies" in dur_cmd:
+            dur_cmd = build_yt_cmd(["--print", "%(duration)s"], target_url, use_cookies=False)
+            dur_res = subprocess.run(dur_cmd, capture_output=True, text=True, timeout=15)
+
         if dur_res.returncode == 0 and dur_res.stdout.strip():
             try:
                 duration = float(dur_res.stdout.strip())
@@ -130,14 +146,14 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
         pass
 
     # 2. Executa yt-dlp fazendo streaming direto com ffmpeg para áudio leve (m4a/aac)
-    yt_cmd = ["yt-dlp"] + get_yt_dlp_base_args() + [
+    format_selector = "140/251/18/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best"
+    yt_cmd = build_yt_cmd([
         "--no-progress",
         "--format",
-        "140/18/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best",
+        format_selector,
         "-o",
         "-",
-        target_url,
-    ]
+    ], target_url, use_cookies=True)
 
     process = subprocess.Popen(
         yt_cmd,
@@ -147,6 +163,23 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
     )
 
     first_chunk = process.stdout.read(64 * 1024)
+    if not first_chunk and "--cookies" in yt_cmd:
+        process.kill()
+        yt_cmd_no_cookies = build_yt_cmd([
+            "--no-progress",
+            "--format",
+            format_selector,
+            "-o",
+            "-",
+        ], target_url, use_cookies=False)
+        process = subprocess.Popen(
+            yt_cmd_no_cookies,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=64 * 1024,
+        )
+        first_chunk = process.stdout.read(64 * 1024)
+
     if not first_chunk:
         stderr_err = process.stderr.read().decode("utf-8", errors="ignore").strip()
         process.kill()
