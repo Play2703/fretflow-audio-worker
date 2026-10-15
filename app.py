@@ -124,6 +124,10 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
         "--no-progress",
         "--quiet",
         "--no-warnings",
+        "--js-runtimes",
+        "node",
+        "--remote-components",
+        "ejs:github",
         "--format",
         "bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio",
         "-o",
@@ -138,8 +142,18 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
         bufsize=64 * 1024,
     )
 
+    first_chunk = process.stdout.read(64 * 1024)
+    if not first_chunk:
+        stderr_err = process.stderr.read().decode("utf-8", errors="ignore").strip()
+        process.kill()
+        raise HTTPException(
+            status_code=422,
+            detail=stderr_err or "Não foi possível extrair a faixa de áudio deste vídeo.",
+        )
+
     def iter_audio():
         try:
+            yield first_chunk
             while True:
                 chunk = process.stdout.read(64 * 1024)
                 if not chunk:

@@ -1,8 +1,9 @@
 FROM python:3.11-slim
 
-# Install system dependencies: ffmpeg for audio conversion, curl, ca-certificates
+# Install system dependencies: ffmpeg for audio conversion, nodejs for YouTube JS challenges, curl, ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    nodejs \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
