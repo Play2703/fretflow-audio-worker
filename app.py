@@ -53,10 +53,6 @@ def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) ->
         "node",
         "--remote-components",
         "ejs:github",
-        "--extractor-args",
-        "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-        "--extractor-args",
-        "youtube:player_client=android,visionos",
     ]
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
     if use_cookies and cookies_content:
@@ -67,6 +63,13 @@ def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) ->
             args.extend(["--cookies", cookies_path])
         except Exception:
             pass
+    else:
+        args.extend([
+            "--extractor-args",
+            "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+            "--extractor-args",
+            "youtube:player_client=android,visionos",
+        ])
     args.extend(extra_args)
     args.append(target_url)
     return args
