@@ -54,6 +54,9 @@ def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) ->
         "--remote-components",
         "ejs:github",
     ]
+    proxy = os.environ.get("HTTP_PROXY") or os.environ.get("YOUTUBE_PROXY")
+    if proxy and proxy.strip():
+        args.extend(["--proxy", proxy.strip()])
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
     if use_cookies and cookies_content:
         cookies_path = "/tmp/yt_cookies.txt"
