@@ -43,7 +43,14 @@ def health_check():
     }
 
 
-def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) -> list:
+FALLBACK_PROXIES = [
+    "http://ezyiubub:qjei4ljgb1eh@191.96.254.138:6185",
+    "http://ezyiubub:qjei4ljgb1eh@64.137.10.153:5803",
+    "http://ezyiubub:qjei4ljgb1eh@23.26.71.145:5628",
+]
+
+
+def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True, proxy_url: str = None) -> list:
     args = [
         "yt-dlp",
         "--no-playlist",
@@ -54,9 +61,10 @@ def build_yt_cmd(extra_args: list, target_url: str, use_cookies: bool = True) ->
         "--remote-components",
         "ejs:github",
     ]
-    proxy = os.environ.get("HTTP_PROXY") or os.environ.get("YOUTUBE_PROXY")
-    if proxy and proxy.strip():
-        args.extend(["--proxy", proxy.strip()])
+    selected_proxy = proxy_url or os.environ.get("HTTP_PROXY") or os.environ.get("YOUTUBE_PROXY") or FALLBACK_PROXIES[0]
+    if selected_proxy and selected_proxy.strip():
+        args.extend(["--proxy", selected_proxy.strip()])
+
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
     if use_cookies and cookies_content:
         cookies_path = "/tmp/yt_cookies.txt"
@@ -85,42 +93,38 @@ def get_metadata(url: str = Query(..., description="YouTube URL")):
         raise HTTPException(status_code=400, detail="URL inválida do YouTube.")
 
     target_url = f"https://www.youtube.com/watch?v={video_id}"
-    cmd = build_yt_cmd(
-        ["--print", "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s"],
-        target_url,
-        use_cookies=True,
+    last_err = ""
+    for proxy_candidate in FALLBACK_PROXIES:
+        cmd = build_yt_cmd(
+            ["--print", "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s"],
+            target_url,
+            use_cookies=False,
+            proxy_url=proxy_candidate,
+        )
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=18)
+            if res.returncode == 0 and res.stdout.strip():
+                output = res.stdout.strip().split("|||")
+                title = output[0] if len(output) > 0 else "YouTube Video"
+                duration = float(output[1]) if len(output) > 1 and output[1] else 0
+                thumbnail = output[2] if len(output) > 2 else ""
+                artist = output[3] if len(output) > 3 else "YouTube"
+
+                return {
+                    "videoId": video_id,
+                    "title": title,
+                    "artist": artist,
+                    "duration": duration,
+                    "thumbnailUrl": thumbnail,
+                }
+            last_err = res.stderr.strip()
+        except subprocess.TimeoutExpired:
+            last_err = "Tempo limite esgotado ao consultar YouTube."
+
+    raise HTTPException(
+        status_code=422,
+        detail=f"Não foi possível obter dados do vídeo: {last_err}",
     )
-    try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-        # Se falhou e usou cookies, tenta novamente sem cookies
-        if res.returncode != 0 and "--cookies" in cmd:
-            cmd_no_cookies = build_yt_cmd(
-                ["--print", "%(title)s|||%(duration)s|||%(thumbnail)s|||%(uploader)s"],
-                target_url,
-                use_cookies=False,
-            )
-            res = subprocess.run(cmd_no_cookies, capture_output=True, text=True, timeout=20)
-
-        if res.returncode != 0:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Não foi possível obter dados do vídeo: {res.stderr.strip()}",
-            )
-        output = res.stdout.strip().split("|||")
-        title = output[0] if len(output) > 0 else "YouTube Video"
-        duration = float(output[1]) if len(output) > 1 and output[1] else 0
-        thumbnail = output[2] if len(output) > 2 else ""
-        artist = output[3] if len(output) > 3 else "YouTube"
-
-        return {
-            "videoId": video_id,
-            "title": title,
-            "artist": artist,
-            "duration": duration,
-            "thumbnailUrl": thumbnail,
-        }
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Tempo limite esgotado ao consultar YouTube.")
 
 
 @app.get("/extract")
@@ -153,47 +157,38 @@ def stream_audio(url: str = Query(..., description="YouTube URL")):
     except subprocess.TimeoutExpired:
         pass
 
-    # 2. Executa yt-dlp fazendo streaming direto com ffmpeg para áudio leve (m4a/aac)
+    # 2. Executa yt-dlp fazendo streaming direto com fallback de proxies
     format_selector = "140/251/18/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best"
-    yt_cmd = build_yt_cmd([
-        "--no-progress",
-        "--format",
-        format_selector,
-        "-o",
-        "-",
-    ], target_url, use_cookies=True)
+    process = None
+    first_chunk = None
+    last_err = ""
 
-    process = subprocess.Popen(
-        yt_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=64 * 1024,
-    )
-
-    first_chunk = process.stdout.read(64 * 1024)
-    if not first_chunk and "--cookies" in yt_cmd:
-        process.kill()
-        yt_cmd_no_cookies = build_yt_cmd([
+    for proxy_candidate in FALLBACK_PROXIES:
+        yt_cmd = build_yt_cmd([
             "--no-progress",
             "--format",
             format_selector,
             "-o",
             "-",
-        ], target_url, use_cookies=False)
+        ], target_url, use_cookies=False, proxy_url=proxy_candidate)
+
         process = subprocess.Popen(
-            yt_cmd_no_cookies,
+            yt_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=64 * 1024,
         )
+
         first_chunk = process.stdout.read(64 * 1024)
+        if first_chunk:
+            break
+        last_err = process.stderr.read().decode("utf-8", errors="ignore").strip()
+        process.kill()
 
     if not first_chunk:
-        stderr_err = process.stderr.read().decode("utf-8", errors="ignore").strip()
-        process.kill()
         raise HTTPException(
             status_code=422,
-            detail=stderr_err or "Não foi possível extrair a faixa de áudio deste vídeo.",
+            detail=last_err or "Não foi possível extrair a faixa de áudio deste vídeo.",
         )
 
     def iter_audio():
